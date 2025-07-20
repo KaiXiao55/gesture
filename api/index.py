@@ -6,6 +6,7 @@ import re
 import json
 import tempfile
 import base64
+import traceback
 
 app = Flask(__name__)
 CORS(app)
@@ -33,6 +34,90 @@ HTML_TEMPLATE = """
             overflow: hidden;
             display: flex;
             flex-direction: column;
+        }
+        
+        /* 调试信息面板 */
+        .debug-panel {
+            position: fixed;
+            bottom: 70px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            color: #0f0;
+            padding: 15px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-width: 350px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(0, 255, 0, 0.3);
+            z-index: 1000;
+        }
+        
+        .debug-panel.show {
+            display: block;
+        }
+        
+        .debug-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .debug-panel::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 4px;
+        }
+        
+        .debug-panel::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 0, 0.5);
+            border-radius: 4px;
+        }
+        
+        .debug-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            z-index: 999;
+        }
+        
+        .debug-toggle:hover {
+            background: #444;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        }
+        
+        .debug-log-entry {
+            margin-bottom: 5px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(0, 255, 0, 0.1);
+        }
+        
+        .debug-time {
+            color: #888;
+            font-size: 11px;
+        }
+        
+        .debug-message {
+            color: #0f0;
+            word-wrap: break-word;
+        }
+        
+        .debug-error {
+            color: #f44;
+        }
+        
+        .debug-info {
+            color: #4af;
         }
         
         /* 手势动画区域 */
@@ -134,12 +219,18 @@ HTML_TEMPLATE = """
         
         #voice-btn {
             background: #48bb78;
+            position: relative;
         }
         
-        #voice-btn:hover {
+        #voice-btn:hover:not(:disabled) {
             background: #38a169;
             transform: translateY(-2px);
             box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        #voice-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
         
         #voice-btn.recording {
@@ -243,6 +334,17 @@ HTML_TEMPLATE = """
                 height: 45px;
                 font-size: 18px;
             }
+            
+            .debug-panel {
+                max-width: 80%;
+                right: 10px;
+                bottom: 60px;
+            }
+            
+            .debug-toggle {
+                right: 10px;
+                bottom: 10px;
+            }
         }
         
         /* 状态指示器 */
@@ -268,6 +370,11 @@ HTML_TEMPLATE = """
             animation: blink 2s infinite;
         }
         
+        .status-dot.error {
+            background: #e53e3e;
+            animation: none;
+        }
+        
         @keyframes blink {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
@@ -277,8 +384,8 @@ HTML_TEMPLATE = """
 <body>
     <!-- 状态指示器 -->
     <div class="status-indicator">
-        <span class="status-dot"></span>
-        <span>在线</span>
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">在线</span>
     </div>
     
     <!-- 手势动画区域 -->
@@ -307,8 +414,68 @@ HTML_TEMPLATE = """
     </div>
     
     <div class="tooltip" id="tooltip"></div>
+    
+    <!-- 调试面板 -->
+    <div class="debug-panel" id="debug-panel"></div>
+    <button class="debug-toggle" onclick="toggleDebug()">调试信息</button>
 
     <script>
+        // 调试功能
+        let debugMode = false;
+        const debugPanel = document.getElementById('debug-panel');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const MAX_DEBUG_LOGS = 100; // 最大日志条数
+        let debugLogs = [];
+        
+        function toggleDebug() {
+            debugMode = !debugMode;
+            debugPanel.classList.toggle('show');
+            if (debugMode) {
+                debug('调试模式已开启', 'info');
+            }
+        }
+        
+        function debug(message, type = 'log') {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+            
+            const time = new Date().toLocaleTimeString();
+            const logEntry = {
+                time: time,
+                message: message,
+                type: type
+            };
+            
+            debugLogs.push(logEntry);
+            if (debugLogs.length > MAX_DEBUG_LOGS) {
+                debugLogs.shift();
+            }
+            
+            if (debugMode) {
+                updateDebugPanel();
+            }
+        }
+        
+        function updateDebugPanel() {
+            debugPanel.innerHTML = debugLogs.map(log => {
+                const typeClass = log.type === 'error' ? 'debug-error' : 
+                                 log.type === 'info' ? 'debug-info' : 'debug-message';
+                return `
+                    <div class="debug-log-entry">
+                        <span class="debug-time">[${log.time}]</span>
+                        <span class="${typeClass}">${log.message}</span>
+                    </div>
+                `;
+            }).join('');
+            debugPanel.scrollTop = debugPanel.scrollHeight;
+        }
+        
+        function setStatus(online, text) {
+            statusDot.classList.toggle('error', !online);
+            statusText.textContent = text || (online ? '在线' : '离线');
+            debug(`状态更新: ${text || (online ? '在线' : '离线')}`, online ? 'info' : 'error');
+        }
+        
         // 画布和手势动画相关
         const canvas = document.getElementById('hand-canvas');
         const ctx = canvas.getContext('2d');
@@ -346,6 +513,7 @@ HTML_TEMPLATE = """
             
             canvas.width = width;
             canvas.height = height;
+            debug(`画布调整大小: ${width}x${height}`);
         }
         
         window.addEventListener('resize', resizeCanvas);
@@ -1062,20 +1230,49 @@ HTML_TEMPLATE = """
         // 语音输入设置 - 使用MediaRecorder
         async function setupMediaRecorder() {
             try {
+                debug('开始初始化麦克风...');
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 检查支持的MIME类型
+                const mimeTypes = [
+                    'audio/webm;codecs=opus',
+                    'audio/webm',
+                    'audio/ogg;codecs=opus',
+                    'audio/mp4'
+                ];
+                
+                let selectedMimeType = '';
+                for (const mimeType of mimeTypes) {
+                    if (MediaRecorder.isTypeSupported(mimeType)) {
+                        selectedMimeType = mimeType;
+                        break;
+                    }
+                }
+                
+                if (!selectedMimeType) {
+                    debug('浏览器不支持音频录制', 'error');
+                    return false;
+                }
+                
+                debug(`使用MIME类型: ${selectedMimeType}`);
+                
                 mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'audio/webm'
+                    mimeType: selectedMimeType
                 });
                 
                 mediaRecorder.ondataavailable = (event) => {
                     if (event.data.size > 0) {
                         audioChunks.push(event.data);
+                        debug(`音频数据块: ${event.data.size} bytes`);
                     }
                 };
                 
                 mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    debug('录音停止，开始处理音频数据...');
+                    const audioBlob = new Blob(audioChunks, { type: selectedMimeType });
                     audioChunks = [];
+                    
+                    debug(`音频总大小: ${(audioBlob.size / 1024).toFixed(2)} KB`);
                     
                     // 发送音频到服务器进行转录
                     const formData = new FormData();
@@ -1083,27 +1280,64 @@ HTML_TEMPLATE = """
                     
                     try {
                         showTooltip('正在识别...');
+                        debug('发送音频到服务器进行识别...');
+                        
+                        const startTime = Date.now();
                         const response = await fetch('/api/transcribe', {
                             method: 'POST',
                             body: formData
                         });
                         
+                        const endTime = Date.now();
+                        debug(`语音识别响应时间: ${endTime - startTime}ms`);
+                        
+                        if (!response.ok) {
+                            const errorText = await response.text();
+                            debug(`服务器错误 (${response.status}): ${errorText}`, 'error');
+                            showTooltip('识别失败：服务器错误');
+                            return;
+                        }
+                        
                         const data = await response.json();
+                        debug('语音识别结果：' + JSON.stringify(data));
+                        
                         if (data.text) {
+                            debug(`识别成功: "${data.text}"`);
                             userInput.value = data.text;
                             sendMessage();
                         } else if (data.error) {
+                            debug(`识别失败: ${data.error}`, 'error');
                             showTooltip('识别失败：' + data.error);
+                        } else {
+                            debug('识别结果为空', 'error');
+                            showTooltip('未能识别到语音内容');
                         }
                     } catch (error) {
+                        debug('语音识别请求失败：' + error.message, 'error');
                         console.error('转录错误:', error);
                         showTooltip('语音识别出错');
                     }
                 };
                 
+                mediaRecorder.onerror = (event) => {
+                    debug('MediaRecorder错误：' + event.error, 'error');
+                    console.error('MediaRecorder error:', event.error);
+                };
+                
+                debug('麦克风初始化成功', 'info');
                 return true;
             } catch (error) {
+                debug('麦克风访问失败：' + error.message, 'error');
                 console.error('无法访问麦克风:', error);
+                
+                if (error.name === 'NotAllowedError') {
+                    showTooltip('请允许麦克风权限');
+                } else if (error.name === 'NotFoundError') {
+                    showTooltip('未找到麦克风设备');
+                } else {
+                    showTooltip('麦克风访问失败');
+                }
+                
                 return false;
             }
         }
@@ -1123,7 +1357,7 @@ HTML_TEMPLATE = """
         
         // 语音输入切换
         async function toggleVoiceInput() {
-            if (!mediaRecorder) {
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') {
                 const success = await setupMediaRecorder();
                 if (!success) {
                     showTooltip('无法访问麦克风');
@@ -1133,7 +1367,15 @@ HTML_TEMPLATE = """
             
             if (isRecording) {
                 // 停止录音
-                mediaRecorder.stop();
+                debug('停止录音');
+                try {
+                    mediaRecorder.stop();
+                    // 停止所有音频轨道
+                    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                } catch (e) {
+                    debug('停止录音时出错：' + e.message, 'error');
+                }
+                
                 isRecording = false;
                 voiceBtn.classList.remove('recording');
                 voiceBtn.innerHTML = '<i class="fas fa-microphone"></i>';
@@ -1142,16 +1384,23 @@ HTML_TEMPLATE = """
                 recordingStartTime = null;
             } else {
                 // 开始录音
+                debug('开始录音');
                 audioChunks = [];
-                mediaRecorder.start();
-                isRecording = true;
-                voiceBtn.classList.add('recording');
-                voiceBtn.innerHTML = '<i class="fas fa-stop"></i>';
-                recordingTime.classList.add('show');
-                recordingStartTime = Date.now();
-                updateRecordingTime();
-                recordingTimer = setInterval(updateRecordingTime, 1000);
-                showTooltip('正在录音...');
+                
+                try {
+                    mediaRecorder.start(100); // 每100ms获取一次数据
+                    isRecording = true;
+                    voiceBtn.classList.add('recording');
+                    voiceBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    recordingTime.classList.add('show');
+                    recordingStartTime = Date.now();
+                    updateRecordingTime();
+                    recordingTimer = setInterval(updateRecordingTime, 1000);
+                    showTooltip('正在录音...');
+                } catch (e) {
+                    debug('开始录音失败：' + e.message, 'error');
+                    showTooltip('无法开始录音');
+                }
             }
         }
         
@@ -1159,6 +1408,7 @@ HTML_TEMPLATE = """
         function showTooltip(text) {
             tooltip.textContent = text;
             tooltip.classList.add('show');
+            debug(`提示: ${text}`, 'info');
             setTimeout(() => {
                 tooltip.classList.remove('show');
             }, 3000);
@@ -1169,8 +1419,11 @@ HTML_TEMPLATE = """
             const message = userInput.value.trim();
             if (!message || sendBtn.classList.contains('loading')) return;
             
+            debug(`发送消息: "${message}"`);
+            
             // 保存消息到历史
             conversationHistory.push({role: 'user', content: message});
+            debug(`对话历史长度: ${conversationHistory.length}`);
             
             // 清空输入
             userInput.value = '';
@@ -1185,6 +1438,9 @@ HTML_TEMPLATE = """
             changeGesture('thinking');
             
             try {
+                debug('发送请求到服务器...');
+                const startTime = Date.now();
+                
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1194,20 +1450,40 @@ HTML_TEMPLATE = """
                     })
                 });
                 
-                const data = await response.json();
+                const endTime = Date.now();
+                debug(`服务器响应时间: ${endTime - startTime}ms`);
                 
-                // 保存助手回复到历史（不显示）
-                if (data.text) {
-                    conversationHistory.push({role: 'assistant', content: data.text});
+                if (!response.ok) {
+                    debug(`服务器错误: ${response.status}`, 'error');
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 
-                // 更新手势
-                changeGesture(data.gesture);
+                const data = await response.json();
+                debug('收到响应：' + JSON.stringify(data));
+                
+                if (data.error) {
+                    setStatus(false, '错误');
+                    showTooltip('错误：' + data.error);
+                    debug(`API错误: ${data.error}`, 'error');
+                } else {
+                    setStatus(true, '在线');
+                    
+                    // 保存助手回复到历史（不显示）
+                    if (data.text) {
+                        conversationHistory.push({role: 'assistant', content: data.text});
+                        debug(`助手回复: "${data.text}"`);
+                    }
+                    
+                    // 更新手势
+                    changeGesture(data.gesture);
+                }
                 
             } catch (error) {
+                debug('请求失败：' + error.message, 'error');
                 console.error('Error:', error);
                 changeGesture('facepalm');
                 showTooltip('出错了，请稍后再试');
+                setStatus(false, '连接错误');
             } finally {
                 // 恢复输入
                 userInput.disabled = false;
@@ -1223,6 +1499,7 @@ HTML_TEMPLATE = """
                 conversationHistory = [];
                 changeGesture('wave');
                 showTooltip('上下文已清空');
+                debug('对话上下文已清空', 'info');
             }
         }
         
@@ -1230,6 +1507,7 @@ HTML_TEMPLATE = """
         function changeGesture(gesture) {
             currentGesture = gesture;
             gestureInfo.textContent = getGestureName(gesture);
+            debug(`切换手势: ${gesture}`);
         }
         
         // 获取手势名称
@@ -1279,6 +1557,57 @@ HTML_TEMPLATE = """
                 }
             });
         }
+        
+        // 页面加载完成后的初始化
+        window.addEventListener('load', function() {
+            debug('页面加载完成', 'info');
+            debug(`用户代理: ${navigator.userAgent}`);
+            debug(`画布大小: ${canvas.width}x${canvas.height}`);
+            
+            // 检查浏览器特性
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                debug('浏览器不支持getUserMedia API', 'error');
+                voiceBtn.disabled = true;
+                voiceBtn.title = '浏览器不支持语音输入';
+            }
+            
+            if (typeof MediaRecorder === 'undefined') {
+                debug('浏览器不支持MediaRecorder API', 'error');
+                voiceBtn.disabled = true;
+                voiceBtn.title = '浏览器不支持录音功能';
+            }
+            
+            // 检查API状态
+            fetch('/api/test')
+                .then(res => res.json())
+                .then(data => {
+                    debug('API测试结果：' + JSON.stringify(data), 'info');
+                    if (!data.has_token) {
+                        setStatus(false, 'API未配置');
+                        showTooltip('请配置DEEPSEEK_API_TOKEN');
+                    } else {
+                        debug('DeepSeek API已配置', 'info');
+                    }
+                    if (data.has_tts_token) {
+                        debug('语音识别API已配置', 'info');
+                    } else {
+                        debug('语音识别API未配置', 'error');
+                    }
+                })
+                .catch(err => {
+                    debug('API测试失败：' + err.message, 'error');
+                    setStatus(false, '离线');
+                });
+        });
+        
+        // 监听错误
+        window.addEventListener('error', function(event) {
+            debug(`全局错误: ${event.message} at ${event.filename}:${event.lineno}:${event.colno}`, 'error');
+        });
+        
+        window.addEventListener('unhandledrejection', function(event) {
+            debug(`未处理的Promise拒绝: ${event.reason}`, 'error');
+        });
     </script>
 </body>
 </html>
@@ -1290,6 +1619,15 @@ class ChatLogic:
     def __init__(self):
         self.api_url = "https://api.deepseek.com/v1/chat/completions"
         self.api_token = os.getenv("DEEPSEEK_API_TOKEN", "")
+
+        # 语音识别API配置
+        self.tts_api_url = "https://api.uomn.cn/v1/audio/transcriptions"
+        self.tts_api_key = "sk-9Q11KSLosBdSRvy8164f697c233c41E680F9FeE26dD26084"
+
+        # 调试输出
+        print(f"[启动] API Token 已加载: {'是' if self.api_token else '否'}")
+        print(f"[启动] Token 长度: {len(self.api_token) if self.api_token else 0}")
+        print(f"[启动] TTS API 已配置: 是")
 
         self.system_prompt = """你是一个手势助手。用户会向你发送消息，你需要理解用户的情感和意图，
 然后用一个合适的手势来回应。你的回复应该简短友好，像朋友之间的对话。
@@ -1319,6 +1657,7 @@ class ChatLogic:
         }
 
         try:
+            print(f"[调试] 调用DeepSeek API")
             response = requests.post(
                 self.api_url, headers=headers, json=payload, timeout=15
             )
@@ -1332,7 +1671,7 @@ class ChatLogic:
                 return {"text": cleaned_content or "明白了！", "success": True}
 
         except Exception as e:
-            print(f"API Error: {e}")
+            print(f"[错误] API Error: {e}")
             return {"text": "抱歉，我现在无法回复。", "success": False}
 
 
@@ -1460,6 +1799,19 @@ def index():
     return Response(HTML_TEMPLATE, mimetype="text/html")
 
 
+@app.route("/api/test", methods=["GET"])
+def test():
+    """测试接口"""
+    return jsonify(
+        {
+            "status": "ok",
+            "has_token": bool(chat_logic.api_token),
+            "has_tts_token": bool(chat_logic.tts_api_key),
+            "token_length": len(chat_logic.api_token) if chat_logic.api_token else 0,
+        }
+    )
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     try:
@@ -1467,16 +1819,22 @@ def chat():
         user_message = data.get("message", "")
         history = data.get("history", [])
 
+        print(f"[聊天] 收到消息: {user_message}")
+
         # 获取回复
         response = chat_logic.get_response(history)
 
         # 选择手势
         gesture = GestureSelector.select_gesture(response["text"])
 
+        print(f"[聊天] 回复: {response['text']}")
+        print(f"[聊天] 手势: {gesture}")
+
         return jsonify({"text": response["text"], "gesture": gesture})
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[错误] 聊天处理错误: {e}")
+        traceback.print_exc()
         return jsonify({"text": "抱歉，出现了一些问题。", "gesture": "facepalm"})
 
 
@@ -1484,44 +1842,77 @@ def chat():
 def transcribe():
     """语音转文字接口"""
     try:
+        print("[语音识别] 开始处理语音请求")
+
         if "audio" not in request.files:
+            print("[语音识别] 错误：未找到音频文件")
             return jsonify({"error": "No audio file provided"}), 400
 
         audio_file = request.files["audio"]
+        print(f"[语音识别] 接收到音频文件: {audio_file.filename}")
+        print(f"[语音识别] 音频文件类型: {audio_file.content_type}")
 
         # 保存到临时文件
         with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_file:
             audio_file.save(tmp_file.name)
             tmp_filename = tmp_file.name
+            file_size = os.path.getsize(tmp_filename)
+            print(f"[语音识别] 临时文件保存至: {tmp_filename}")
+            print(f"[语音识别] 文件大小: {file_size / 1024:.2f} KB")
 
         try:
             # 调用语音转文字API
-            url = "https://api.uomn.cn/v1/audio/transcriptions"
-            headers = {
-                "Authorization": "Bearer sk-9Q11KSLosBdSRvy8164f697c233c41E680F9FeE26dD26084"
-            }
+            print(f"[语音识别] 准备发送到API: {chat_logic.tts_api_url}")
+
+            headers = {"Authorization": f"Bearer {chat_logic.tts_api_key}"}
 
             with open(tmp_filename, "rb") as f:
                 files = {"file": ("audio.webm", f, "audio/webm")}
                 data = {"model": "whisper-1", "language": "zh"}
 
+                print("[语音识别] 发送请求到语音识别API...")
                 response = requests.post(
-                    url, headers=headers, files=files, data=data, timeout=30
+                    chat_logic.tts_api_url,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=30,
                 )
+
+                print(f"[语音识别] API响应状态码: {response.status_code}")
 
                 if response.status_code == 200:
                     result = response.json()
-                    return jsonify({"text": result.get("text", "")})
+                    print(f"[语音识别] API响应内容: {result}")
+
+                    text = result.get("text", "")
+                    if text:
+                        print(f"[语音识别] 识别成功: {text}")
+                        return jsonify({"text": text})
+                    else:
+                        print("[语音识别] 错误：API返回空文本")
+                        return jsonify({"error": "No text recognized"}), 400
                 else:
-                    return jsonify({"error": "Transcription failed"}), 500
+                    print(f"[语音识别] API错误响应: {response.text}")
+                    error_msg = f"API error: {response.status_code}"
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get("error", {}).get(
+                            "message", error_msg
+                        )
+                    except:
+                        pass
+                    return jsonify({"error": error_msg}), response.status_code
 
         finally:
             # 清理临时文件
             if os.path.exists(tmp_filename):
                 os.unlink(tmp_filename)
+                print(f"[语音识别] 已删除临时文件: {tmp_filename}")
 
     except Exception as e:
-        print(f"Transcribe error: {e}")
+        print(f"[语音识别] 未知错误: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
